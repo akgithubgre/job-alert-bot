@@ -27,8 +27,8 @@ def fetch_jobs_jsearch(query: str) -> list:
     params = {
         "query":       f"{query} in India",
         "page":        "1",
-        "num_pages":   "1",
-        "date_posted": "today",
+        "num_pages":   "2",
+        "date_posted": "3days",
         "country":     "in",
     }
 
@@ -37,23 +37,35 @@ def fetch_jobs_jsearch(query: str) -> list:
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         print(f"[INFO] JSearch '{query}' status: {resp.status_code}")
         if not resp.ok:
-            print(f"[WARN] Bad response: {resp.text[:200]}")
+            print(f"[WARN] Bad response: {resp.text[:300]}")
             return []
 
         data = resp.json()
         results = data.get("data", [])
-        print(f"[INFO] '{query}' returned {len(results)} jobs")
+        print(f"[INFO] '{query}' returned {len(results)} raw jobs")
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
 
         for job in results:
+            # filter only last 24 hours using timestamp
+            posted_at = job.get("job_posted_at_timestamp")
+            if posted_at:
+                posted_dt = datetime.fromtimestamp(posted_at, tz=timezone.utc)
+                if posted_dt < cutoff:
+                    continue
+
             jobs.append({
                 "title":    job.get("job_title", "N/A"),
                 "company":  job.get("employer_name", "N/A"),
-                "location": job.get("job_city") or job.get("job_country", "N/A"),
+                "location": job.get("job_city") or job.get("job_state") or job.get("job_country", "N/A"),
                 "link":     job.get("job_apply_link") or job.get("job_google_link", ""),
                 "source":   job.get("job_publisher", "N/A"),
                 "remote":   job.get("job_is_remote", False),
                 "query":    query,
             })
+
+        print(f"[INFO] '{query}' → {len(jobs)} jobs after 24hr filter")
+
     except Exception as e:
         print(f"[ERROR] JSearch failed for '{query}': {e}")
 
@@ -110,7 +122,7 @@ def format_digest(jobs: list) -> str:
     header = (
         f"🔔 <b>Job Alert Digest</b>\n"
         f"🕐 {now_ist.strftime('%d %b %Y, %I:%M %p')} IST\n"
-        f"📋 <b>{len(jobs)} new job(s)</b> found today\n"
+        f"📋 <b>{len(jobs)} new job(s)</b> in last 24 hrs\n"
         f"{'─' * 30}\n\n"
     )
 
