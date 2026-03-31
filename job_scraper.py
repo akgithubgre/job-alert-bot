@@ -18,38 +18,42 @@ SEARCH_QUERIES = [
 
 # ─── JSEARCH API ──────────────────────────────────────────────────────────────
 
-def fetch_jobs_jsearch(query: str) -> list[dict]:
+def fetch_jobs_jsearch(query: str) -> list:
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
         "x-rapidapi-host": "jsearch.p.rapidapi.com",
         "x-rapidapi-key":  JSEARCH_API_KEY,
     }
     params = {
-        "query":        f"{query} in India",
-        "page":         "1",
-        "num_pages":    "1",
-        "date_posted":  "today",  # only today's jobs
-        "country":      "in",
+        "query":       f"{query} in India",
+        "page":        "1",
+        "num_pages":   "1",
+        "date_posted": "today",
+        "country":     "in",
     }
 
     jobs = []
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        print(f"[INFO] JSearch '{query}' status: {resp.status_code}")
+        if not resp.ok:
+            print(f"[WARN] Bad response: {resp.text[:200]}")
+            return []
 
-        for job in data.get("data", []):
+        data = resp.json()
+        results = data.get("data", [])
+        print(f"[INFO] '{query}' returned {len(results)} jobs")
+
+        for job in results:
             jobs.append({
-                "title":   job.get("job_title", "N/A"),
-                "company": job.get("employer_name", "N/A"),
-                "location": job.get("job_city") or job.get("job_country") or "N/A",
-                "link":    job.get("job_apply_link") or job.get("job_google_link", ""),
-                "source":  job.get("job_publisher", "N/A"),
-                "posted":  job.get("job_posted_at_datetime_utc", ""),
-                "remote":  job.get("job_is_remote", False),
-                "query":   query,
+                "title":    job.get("job_title", "N/A"),
+                "company":  job.get("employer_name", "N/A"),
+                "location": job.get("job_city") or job.get("job_country", "N/A"),
+                "link":     job.get("job_apply_link") or job.get("job_google_link", ""),
+                "source":   job.get("job_publisher", "N/A"),
+                "remote":   job.get("job_is_remote", False),
+                "query":    query,
             })
-        print(f"[INFO] JSearch returned {len(jobs)} jobs for '{query}'")
     except Exception as e:
         print(f"[ERROR] JSearch failed for '{query}': {e}")
 
@@ -57,7 +61,7 @@ def fetch_jobs_jsearch(query: str) -> list[dict]:
 
 # ─── FETCH ALL ────────────────────────────────────────────────────────────────
 
-def fetch_all_jobs() -> list[dict]:
+def fetch_all_jobs() -> list:
     all_jobs   = []
     seen_links = set()
 
@@ -83,9 +87,9 @@ def send_telegram(message: str):
     }
     resp = requests.post(url, json=payload)
     if not resp.ok:
-        print(f"[ERROR] Telegram failed: {resp.text}")
+        print(f"[ERROR] Telegram send failed: {resp.text}")
 
-def chunk_messages(text: str, limit: int = 4000) -> list[str]:
+def chunk_messages(text: str, limit: int = 4000) -> list:
     lines = text.split("\n")
     chunks, current = [], ""
     for line in lines:
@@ -100,22 +104,20 @@ def chunk_messages(text: str, limit: int = 4000) -> list[str]:
 
 # ─── FORMAT ───────────────────────────────────────────────────────────────────
 
-def format_digest(jobs: list[dict]) -> str:
+def format_digest(jobs: list) -> str:
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
-
     header = (
         f"🔔 <b>Job Alert Digest</b>\n"
         f"🕐 {now_ist.strftime('%d %b %Y, %I:%M %p')} IST\n"
         f"📋 <b>{len(jobs)} new job(s)</b> found today\n"
-        f"{'─'*30}\n\n"
+        f"{'─' * 30}\n\n"
     )
 
     if not jobs:
-        return header + "😴 No new jobs found right now. Check back later!"
+        return header + "😴 No new jobs found this time. Check back later!"
 
-    # Group by role
-    grouped: dict[str, list] = {}
+    grouped = {}
     for job in jobs:
         q = job["query"].title()
         grouped.setdefault(q, []).append(job)
@@ -124,12 +126,11 @@ def format_digest(jobs: list[dict]) -> str:
     for role, role_jobs in grouped.items():
         body += f"<b>💼 {role}</b> ({len(role_jobs)} jobs)\n\n"
         for job in role_jobs[:8]:
-            remote_tag = "🌍 Remote" if job["remote"] else f"📍 {job['location']}"
+            remote_tag = " 🌍 Remote" if job["remote"] else f" 📍 {job['location']}"
             body += (
                 f"  📌 <b>{job['title']}</b>\n"
-                f"  🏢 {job['company']}\n"
-                f"  {remote_tag}\n"
-                f"  🌐 via {job['source']}\n"
+                f"  🏢 {job['company']}{remote_tag}\n"
+                f"  🌐 {job['source']}\n"
                 f"  🔗 <a href='{job['link']}'>Apply Here</a>\n\n"
             )
 
@@ -138,8 +139,8 @@ def format_digest(jobs: list[dict]) -> str:
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print(f"[INFO] Started at {datetime.now(timezone.utc).isoformat()}")
-    jobs   = fetch_all_jobs()
+    print(f"[INFO] Job scraper started at {datetime.now(timezone.utc).isoformat()}")
+    jobs = fetch_all_jobs()
     digest = format_digest(jobs)
     for chunk in chunk_messages(digest):
         send_telegram(chunk)
